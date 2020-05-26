@@ -1,9 +1,9 @@
 package filesystem
 
-import "github.com/fsnotify/fsnotify"
-
-type onEventFunction func(event fsnotify.Event) error
-type onErrorFunction func(err error)
+import (
+	"github.com/andrzejd-pl/aws-s3/core"
+	"github.com/fsnotify/fsnotify"
+)
 
 type Watcher interface {
 	Watch() error
@@ -11,14 +11,13 @@ type Watcher interface {
 }
 
 type filesWatcher struct {
-	onError   onErrorFunction
-	onEvent   onEventFunction
+	service   core.WatcherService
 	watcher   *fsnotify.Watcher
 	directory string
 }
 
-func NewFilesWatcher(onError onErrorFunction, onEvent onEventFunction, directory string) Watcher {
-	return &filesWatcher{onError: onError, onEvent: onEvent, directory: directory}
+func NewFilesWatcher(service core.WatcherService, directory string) Watcher {
+	return &filesWatcher{service: service, directory: directory}
 }
 
 func (fw *filesWatcher) Watch() error {
@@ -36,15 +35,25 @@ func (fw *filesWatcher) Watch() error {
 					return
 				}
 
-				err := fw.onEvent(event)
-				if err != nil {
+				var err error
+				if event.Op&fsnotify.Write == fsnotify.Write {
+					err = fw.service.OnWrite(event.Name)
+				} else if event.Op&fsnotify.Create == fsnotify.Create {
+					err = fw.service.OnCreate(event.Name)
+				} else if event.Op&fsnotify.Chmod == fsnotify.Chmod {
+					err = fw.service.OnChmod(event.Name)
+				} else if event.Op&fsnotify.Rename == fsnotify.Rename {
+					err = fw.service.OnRename(event.Name)
+				} else if event.Op&fsnotify.Remove == fsnotify.Remove {
+					err = fw.service.OnRemove(event.Name)
+				} else if err != nil {
 					return
 				}
 			case err, ok := <-fw.watcher.Errors:
 				if !ok {
 					return
 				}
-				fw.onError(err)
+				fw.service.OnError(err)
 			}
 		}
 	}()
