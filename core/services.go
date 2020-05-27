@@ -1,8 +1,10 @@
 package core
 
 import (
+	"github.com/andrzejd-pl/aws-s3/aws"
 	"log"
 	"os"
+	"time"
 )
 
 type WatcherService interface {
@@ -14,49 +16,27 @@ type WatcherService interface {
 	OnChmod(name string) error
 }
 
-type fileStatus struct {
-	created, writing bool
-}
-
 type filesService struct {
-	files map[string]fileStatus
+	client aws.ClientInterface
 }
 
-func NewFilesService() WatcherService {
-	return &filesService{files: map[string]fileStatus{}}
+func NewFilesService(client aws.ClientInterface) WatcherService {
+	return &filesService{client: client}
 }
 
-func (s *filesService) resetFileStatus(name string) {
-	if file, ok := s.files[name]; ok {
-		file.created, file.writing = false, false
-		s.files[name] = file
-	}
-}
-
-func (s *filesService) OnCreate(name string) error {
-	if _, ok := s.files[name]; ok {
-		s.resetFileStatus(name)
-	} else {
-		s.files[name] = fileStatus{
-			created: true,
-			writing: false,
-		}
-	}
+func (s *filesService) OnCreate(string) error {
 	return nil
 }
 
-func (s *filesService) OnRemove(name string) error {
-	s.resetFileStatus(name)
+func (s *filesService) OnRemove(string) error {
 	return nil
 }
 
-func (s *filesService) OnRename(name string) error {
-	s.resetFileStatus(name)
+func (s *filesService) OnRename(string) error {
 	return nil
 }
 
-func (s *filesService) OnChmod(name string) error {
-	s.resetFileStatus(name)
+func (s *filesService) OnChmod(string) error {
 	return nil
 }
 
@@ -65,22 +45,31 @@ func (s *filesService) OnError(err error) {
 }
 
 func (s *filesService) OnWrite(name string) error {
-	if file, ok := s.files[name]; ok {
-		if file.created && file.writing {
-			if _, err := os.Stat(name); err == nil {
-				log.Println(name, "file exist")
-			} else {
-				log.Println(name, "file not exist")
-			}
-			s.resetFileStatus(name)
-		} else if file.created {
-			file.writing = true
-			s.files[name] = file
-		} else {
-			s.resetFileStatus(name)
-		}
-	} else {
-		s.resetFileStatus(name)
+	time.Sleep(time.Second)
+	file, err := os.Open(name)
+	if err != nil {
+		log.Printf("file name: \"%s\", error: \"%v\"\n", name, err)
+		return nil
 	}
+	defer file.Close()
+
+	fileStat, err := file.Stat()
+	if err != nil {
+		log.Printf("file name: \"%s\", error: \"%v\"\n", name, err)
+		return nil
+	}
+
+	if fileStat.IsDir() {
+		log.Printf("%s is directory", name)
+		return nil
+	}
+
+	item, err := s.client.Upload(file, fileStat.Size(), file.Name(), "windows")
+	if err != nil {
+		log.Printf("file name: \"%s\", error: \"%v\"\n", name, err)
+		return nil
+	}
+
+	log.Printf("file %s uploaded, name in aws: %s", name, item.Name())
 	return nil
 }
