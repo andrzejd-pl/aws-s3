@@ -3,6 +3,8 @@ package filesystem
 import (
 	"github.com/andrzejd-pl/aws-s3/core"
 	"github.com/fsnotify/fsnotify"
+	"log"
+	"sync"
 )
 
 type Watcher interface {
@@ -14,10 +16,11 @@ type filesWatcher struct {
 	service   core.WatcherService
 	watcher   *fsnotify.Watcher
 	directory string
+	waitGroup *sync.WaitGroup
 }
 
-func NewFilesWatcher(service core.WatcherService, directory string) Watcher {
-	return &filesWatcher{service: service, directory: directory}
+func NewFilesWatcher(service core.WatcherService, directory string, wg *sync.WaitGroup) Watcher {
+	return &filesWatcher{service: service, directory: directory, waitGroup: wg}
 }
 
 func (fw *filesWatcher) Watch() error {
@@ -32,8 +35,10 @@ func (fw *filesWatcher) Watch() error {
 			select {
 			case event, ok := <-fw.watcher.Events:
 				if !ok {
+					fw.waitGroup.Done()
 					return
 				}
+				log.Println(event)
 
 				var err error
 				if event.Op&fsnotify.Write == fsnotify.Write {
@@ -47,6 +52,7 @@ func (fw *filesWatcher) Watch() error {
 				} else if event.Op&fsnotify.Remove == fsnotify.Remove {
 					err = fw.service.OnRemove(event.Name)
 				} else if err != nil {
+					fw.waitGroup.Done()
 					return
 				}
 			case err, ok := <-fw.watcher.Errors:
