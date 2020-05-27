@@ -1,17 +1,20 @@
 package main
 
 import (
+	"fmt"
 	"github.com/andrzejd-pl/aws-s3/aws"
+	"github.com/andrzejd-pl/aws-s3/core"
+	"github.com/andrzejd-pl/aws-s3/filesystem"
 	"log"
 	"os"
-	"strings"
+	"os/signal"
+	"sync"
 )
 
 func main() {
-	log.Println("Init the program")
-	contents := "This is a new file stored in the cloud"
-	r := strings.NewReader(contents)
-	size := int64(len(contents))
+	var wg sync.WaitGroup
+	wg.Add(1)
+	catchSigint(&wg)
 
 	client := aws.NewClient(
 		os.Getenv("AWS_ACCESS_KEY"),
@@ -19,12 +22,28 @@ func main() {
 		os.Getenv("AWS_REGION"),
 		os.Getenv("AWS_S3_BUCKET"),
 	)
+	service := core.NewFilesService(client)
+	log.Println("Start watch directory")
+	watcher := filesystem.NewFilesWatcher(service, os.Getenv("WATCHED_DIRECTORY"), &wg)
 
-	item, err := client.Upload(r, size, "name.txt", "directory")
+	err := watcher.Watch()
 	if err != nil {
 		log.Println(err)
 		return
 	}
+	defer watcher.Close()
 
-	log.Println(item.Name())
+	wg.Wait()
+}
+
+func catchSigint(wg *sync.WaitGroup) {
+	c := make(chan os.Signal, 2)
+	signal.Notify(c, os.Interrupt)
+	go func() {
+		_ = <-c
+		fmt.Println("To stop the program press Ctrl+C")
+		_ = <-c
+		log.Println("Stop the program")
+		wg.Done()
+	}()
 }
